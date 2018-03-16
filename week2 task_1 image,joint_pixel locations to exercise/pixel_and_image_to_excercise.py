@@ -6,43 +6,15 @@
 import os
 import pandas as pd
 import numpy as np
+from PIL import Image
+import scipy
 from sklearn.model_selection import KFold
 from sklearn.metrics import confusion_matrix
 from sklearn import svm
 from sklearn.metrics import accuracy_score
 
-def train_test_split(fdata,trainSize):
-    np.random.shuffle(fdata)
-    splitLoc = np.floor(trainSize*len(fdata))
-    splitLoc = splitLoc.astype(int)
-    #print(splitLoc)
-    # create the random split
-    ftrain = fdata[0:splitLoc,:]
-    ftest = fdata[splitLoc+1:,:]
-    return ftrain, ftest 
-        
-def readData():
-#    cwd=os.getcwd()
-    os.chdir("C:/Users/karthik/Desktop/mlabs_main/set-2")
-    file= 'data.csv'
-    x1 = pd.read_csv(file)
-    #x1=pd.ExcelFile(file)
-    #df1=x1.parse('Sheet1')
-    #print(df1)
-    npdata=x1.as_matrix()
-    return npdata
-
-def norm_01(data):
-    #standardizind mean 0 variance 1
-    norm=[]
-    for i in range(len(data)):
-        cur=data[i,:]
-        s_data= (cur - cur.mean()) / cur.std()
-        #normalizing [0,1] min-max scaling
-        s_data = (s_data - s_data.min()) / (s_data.max() - s_data.min())
-        norm.append(s_data)
-    norm=np.asarray(norm)    
-    return norm
+opts = {'rdir': 'C:/Users/karthik/Desktop/mlabs_main/w2s1/frames/',
+        'refSize' : [80,80,3]}
 
 def num_to_exer(num):
     ans="none"
@@ -56,6 +28,66 @@ def num_to_exer(num):
         ans='pushup'
     return ans
 
+def train_test_split(fdata,trainSize):
+    np.random.shuffle(fdata)
+    splitLoc = np.floor(trainSize*len(fdata))
+    splitLoc = splitLoc.astype(int)
+    #print(splitLoc)
+    # create the random split
+    ftrain = fdata[0:splitLoc,:]
+    ftest = fdata[splitLoc+1:,:]
+    return ftrain, ftest 
+        
+def readData():
+#    cwd=os.getcwd()
+    getimage = None
+    os.chdir("C:/Users/karthik/Desktop/mlabs_main/w2s1")
+    file= 'data.csv'
+    x1 = pd.read_csv(file)
+    #x1=pd.ExcelFile(file)
+    #df1=x1.parse('Sheet1')
+    #print(df1)
+    #print(x1)
+    npdata=x1.as_matrix()
+    #print(npdata)
+    loc=npdata[:,0]
+    for i in range(len(loc)):
+        dirname = opts['rdir']+loc[i]
+        #print(dirname)
+        if(not(dirname.endswith('.jpg'))):  
+            dirname = dirname+'.jpg'
+        # read Image
+        try:
+            #print("hello")
+            img = np.asarray(Image.open(dirname))
+            img = scipy.misc.imresize(img,(opts['refSize']))     
+            # collapse into vector
+            feat = np.reshape(img,(1,np.prod(opts['refSize'])))
+            #print(feat)
+            # append to dataset
+            if getimage is None:
+                getimage = feat
+                #print(getimage)
+            else:
+                getimage = np.vstack((getimage,feat))
+        except FileNotFoundError:
+            print(dirname)
+            print("fetch error")
+    
+    return npdata,getimage
+
+def norm_01(data):
+    #standardizind mean 0 variance 1
+    norm=[]
+    for i in range(len(data)):
+        cur=data[i,:]
+        s_data= (cur - cur.mean()) / cur.std()
+        #normalizing [0,1] min-max scaling
+        s_data = (s_data - s_data.min()) / (s_data.max() - s_data.min())
+        norm.append(s_data)
+    norm=np.asarray(norm)    
+    return norm
+    
 def discretize(classlabels):
     for i in range(0,len(classlabels)):
         #print(classlabels[i])
@@ -91,7 +123,6 @@ def calc_dist(data):
         for j in range(0,len(data[i])-1):
             for k in range(j+1,len(data[i])):
                 calc=((data[i][j][0]-data[i][k][0])**2 + (data[i][j][1]-data[i][k][1])**2)**(1/2.0)
-                calc=calc*10000
                 dist.append(calc)
         newdata.append(dist)
     return newdata   
@@ -105,8 +136,7 @@ def dist_point_plane(p0, p1, p2):
     if(denom==0):
         result=((x0-x2)**2 + (y2-y0)**2)**(1/2.0)
     else:
-        result = nom / denom
-    result=result*10000    
+        result = nom / denom  
     return result
 
 def calc_plane_dist(data,svmfeeddata):
@@ -131,18 +161,27 @@ def generate_matrix(data):
     lab=lab.astype('int')
     return svmfeeddata,lab                                                       
 
+
+
+
 try:
     #np.set_printoptions(threshold=np.nan)
-    data=readData()
+    data, imgdata=readData()
+    print("reading complete")
     dataview=data.tolist()
     kf = KFold(n_splits=4,shuffle=True)
     conf_mat=np.full((4,4),0)
     scores=[]
     for train_index, test_index in kf.split(data):
         ftrain, ftest = data[train_index], data[test_index]
+        itrain,itest = imgdata[train_index], imgdata[test_index]
+        itrain,itest = itrain[:,2:],itest[:,2:]
+        itrain,itest = norm_01(itrain),norm_01(itest)
 #    ftrain,ftest = train_test_split(data,0.7)
         train_d,train_l=generate_matrix(ftrain)
+        train_d=np.hstack((train_d,itrain))
         test_d,test_l=generate_matrix(ftest)
+        test_d=np.hstack((test_d,itest))
         clf = svm.LinearSVC(C=3.5)
 #        clf = svm.SVC(decision_function_shape='ovo',tol=0.00001,degree=3)
         clf.fit(train_d, train_l)
@@ -153,9 +192,11 @@ try:
         scores.append(cur_score)
         train_score=accuracy_score(train_l,ftrain_pred,normalize=True)
         print(train_score,cur_score)
+        
         for j in range(len(test_l)):
             if(ftest_pred[j]!=test_l[j]):
                 print("misclassified - ",ftest[j,0]," where ",num_to_exer(ftest[j,1])," as ",num_to_exer(ftest_pred[j]))
+                
         cur_matrix=confusion_matrix(test_l,ftest_pred)
         cur_matrix=np.asarray(cur_matrix)
         conf_mat=np.add(conf_mat, cur_matrix)
